@@ -1,0 +1,12 @@
+  name: dynasties-cc
+  region: fra
+  static_sites:
+  - name: dynasties-web
+    github:
+      repo: rinat-enikeev/dynasties.cc
+      branch: main
+      deploy_on_push: true
+    source_dir: /
+    output_dir: /
+    index_document: index.html
+    catchall_document: index.html
