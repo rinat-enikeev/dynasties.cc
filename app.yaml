@@ -1,4 +1,4 @@
-  name: dynasties-cc
+name: dynasties-cc
   region: fra
   static_sites:
   - name: dynasties-web
@@ -8,5 +8,5 @@
       deploy_on_push: true
     source_dir: /
     output_dir: /
-    index_document: index.html
-    catchall_document: index.html
+    index_document: Dynasties.html
+    catchall_document: Dynasties.html

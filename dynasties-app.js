@@ -164,7 +164,7 @@ var STRINGS = {
     end_donate_line: "The next chapters of history aren’t written yet. <b>Fund the imaginative scenarios that will write them</b> — the 3rd Industrial Revolution, and the centuries to come.",
     end_donate_btn: "Donate for imaginative scenarios →",
 
-    foot_credit: "By the authors →",
+    foot_credit: "Concepts & ideas: Petr Shchedrovitskiy →",
     foot_disclaimer: "Vibe-coded — assembled by conversational prompting, not hand-engineered. The history is real and sourced; the game itself is an experiment.",
     foot_donate: "Fund more imaginative scenarios →",
 
@@ -282,7 +282,7 @@ var STRINGS = {
     end_donate_line: "Следующие главы истории ещё не написаны. <b>Поддержите воображаемые сценарии, которые их напишут</b> — 3-ю промышленную революцию и столетия, что грядут.",
     end_donate_btn: "Поддержать воображаемые сценарии →",
 
-    foot_credit: "От авторов →",
+    foot_credit: "Концепции и идеи: Пётр Щедровицкий →",
     foot_disclaimer: "Vibe-coded — собрано разговорными подсказками, а не написано вручную. История — настоящая и с источниками; сама игра — эксперимент.",
     foot_donate: "Поддержать новые сценарии →",
 
