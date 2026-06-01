@@ -8,5 +8,7 @@ static_sites:
     deploy_on_push: true
   source_dir: /
   output_dir: /
-  index_document: Dynasties.html
-  catchall_document: Dynasties.html
+  index_document: index.html
+  catchall_document: index.html
+  routes:
+  - path: /
