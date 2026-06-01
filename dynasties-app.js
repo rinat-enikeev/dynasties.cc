@@ -15,7 +15,7 @@ var DATA = {
   en: window.DYNASTIES_TICKS_EN || [],
   ru: window.DYNASTIES_TICKS_RU || []
 };
-var STRIPE = "https://buy.stripe.com/REPLACE_WITH_YOUR_STRIPE_PAYMENT_LINK";
+var STRIPE = "https://buy.stripe.com/dRmaEQ7Dfayb09a8bAcAo00";
 var app = document.getElementById("app");
 var footerInner = document.getElementById("footerInner");
 var htmlRoot = document.getElementById("htmlRoot");
