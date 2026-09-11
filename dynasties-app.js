@@ -84,10 +84,12 @@ function detectLang(){
     var saved = Store.get(LANG_KEY);
     if(saved === "en" || saved === "ru") return saved;
   } catch(_){}
+  /* Russian is the default. Only a browser whose primary language is
+     English opens in English — every other locale (ru, de, fr,
+     unknown) gets Russian. */
   var navLang = (navigator.language || navigator.userLanguage || "").toLowerCase();
-  if(navLang.indexOf("ru") === 0) return "ru";
-  if(/^(be|kk|ky|uz)/.test(navLang)) return "ru";
-  return "en";
+  if(/^en/.test(navLang)) return "en";
+  return "ru";
 }
 function setLang(lang){
   if(lang !== "en" && lang !== "ru") return;
