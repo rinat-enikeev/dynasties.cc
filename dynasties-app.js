@@ -23,10 +23,65 @@ var htmlRoot = document.getElementById("htmlRoot");
 /* ============================================================
    i18n
    ============================================================ */
+/* ============================================================
+   STORAGE — localStorage with a cookie fallback, so progress
+   survives a reload even where localStorage is blocked
+   (private mode, in-app browsers such as Telegram's).
+   ============================================================ */
+var COOKIE_DAYS = 365;
+var Store = (function(){
+  function lsOK(){
+    try { var k="__d_t"; localStorage.setItem(k,"1"); localStorage.removeItem(k); return true; }
+    catch(_){ return false; }
+  }
+  var hasLS = lsOK();
+  function cookieGet(name){
+    var m = document.cookie.match(new RegExp("(?:^|; )" + name.replace(/[.$?*|{}()\[\]\\/+^]/g,"\\$&") + "=([^;]*)"));
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function cookieSet(name, value){
+    var d = new Date();
+    d.setTime(d.getTime() + COOKIE_DAYS*864e5);
+    var secure = location.protocol === "https:" ? "; Secure" : "";
+    document.cookie = name + "=" + encodeURIComponent(value) +
+      "; Expires=" + d.toUTCString() + "; Path=/; SameSite=Lax" + secure;
+  }
+  function cookieDel(name){
+    document.cookie = name + "=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; SameSite=Lax";
+  }
+  return {
+    get: function(k){
+      if(hasLS){
+        try { var v = localStorage.getItem(k); if(v !== null) return v; } catch(_){}
+      }
+      try { return cookieGet(k); } catch(_){ return null; }
+    },
+    /* `v` goes to localStorage; the cookie mirror gets `v` when it
+       fits, else the compact `small` variant, else it is dropped so a
+       stale cookie can never outlive the real save. */
+    set: function(k, v, small){
+      var stored = false;
+      if(hasLS){
+        try { localStorage.setItem(k, v); stored = true; } catch(_){}
+      }
+      try {
+        var forCookie = v.length < 3600 ? v : (small && small.length < 3600 ? small : null);
+        if(forCookie){ cookieSet(k, forCookie); stored = true; }
+        else { cookieDel(k); }
+      } catch(_){}
+      return stored;
+    },
+    remove: function(k){
+      if(hasLS){ try { localStorage.removeItem(k); } catch(_){} }
+      try { cookieDel(k); } catch(_){}
+    }
+  };
+})();
+
 var LANG_KEY = "dynasties.lang";
 function detectLang(){
   try {
-    var saved = localStorage.getItem(LANG_KEY);
+    var saved = Store.get(LANG_KEY);
     if(saved === "en" || saved === "ru") return saved;
   } catch(_){}
   var navLang = (navigator.language || navigator.userLanguage || "").toLowerCase();
@@ -36,7 +91,7 @@ function detectLang(){
 }
 function setLang(lang){
   if(lang !== "en" && lang !== "ru") return;
-  try { localStorage.setItem(LANG_KEY, lang); } catch(_){}
+  try { Store.set(LANG_KEY, lang); } catch(_){}
   currentLang = lang;
   if(htmlRoot) htmlRoot.setAttribute("lang", lang);
   document.title = t("title_doc");
@@ -321,6 +376,93 @@ function freshState(houseName){
   };
 }
 
+/* ============================================================
+   SAVED PROGRESS
+   A reload resumes exactly where the player left off — the
+   screen, the generation, and any decisions already picked.
+   ============================================================ */
+var SAVE_KEY = "dynasties.save";
+var SAVE_VERSION = 1;
+var restoring = false;
+
+function cloneState(){
+  try { return JSON.parse(JSON.stringify(S)); } catch(_){ return null; }
+}
+function saveGame(screen, snapshot){
+  if(restoring) return;
+  var st = snapshot || S;
+  if(!st) return;
+  try {
+    var payload = { v: SAVE_VERSION, screen: screen, s: st };
+    var json = JSON.stringify(payload);
+    var slim = json;
+    if(json.length >= 3600 && st.history && st.history.length){
+      /* the narrative log is the bulky part and nothing renders from
+         it — shed it so a late-game save still fits a cookie */
+      var trimmed = JSON.parse(json);
+      trimmed.s.history = [];
+      slim = JSON.stringify(trimmed);
+    }
+    Store.set(SAVE_KEY, json, slim);
+  } catch(_){}
+}
+function loadGame(){
+  var raw = Store.get(SAVE_KEY);
+  if(!raw) return null;
+  try {
+    var p = JSON.parse(raw);
+    if(!p || p.v !== SAVE_VERSION || !p.s) return null;
+    var st = p.s;
+    if(typeof st.tickIdx !== "number" || typeof st.capital !== "number") return null;
+    if(!st.selections) st.selections = {};
+    if(!st.history) st.history = [];
+    if(!st.jumps) st.jumps = [];
+    return p;
+  } catch(_){ return null; }
+}
+function clearSave(){ Store.remove(SAVE_KEY); }
+
+function restoreGame(){
+  var p = loadGame();
+  if(!p) return false;
+  var ticks = getTicks();
+  if(!ticks.length) return false;
+  if(p.s.tickIdx < 0 || p.s.tickIdx >= ticks.length){
+    if(p.screen !== "end"){ clearSave(); return false; }
+  }
+  var tick = ticks[Math.min(p.s.tickIdx, ticks.length-1)];
+
+  /* drop any selection that does not resolve against the current data */
+  var sel = p.s.selections, clean = {};
+  tick.decisions.forEach(function(d){
+    var i = sel[d.num];
+    if(typeof i === "number" && d.options[i]) clean[d.num] = i;
+  });
+  p.s.selections = clean;
+  var complete = Object.keys(clean).length === 5;
+  if((p.screen === "outcome" || p.screen === "gameover") && !complete) p.screen = "tick";
+
+  restoring = true;
+  try {
+    S = p.s;
+    if(p.screen === "end"){ renderEnd(); }
+    else if(p.screen === "gameover"){
+      var r = resolveTick(tick);
+      if(r.gameOver) renderGameOver(tick, r.gameOver); else renderTick();
+    }
+    else if(p.screen === "outcome"){ restoring = false; liveGeneration(); }
+    else if(p.screen === "tick"){ renderTick(); }
+    else { restoring = false; clearSave(); return false; }
+  } catch(err){
+    restoring = false;
+    clearSave();
+    return false;
+  }
+  restoring = false;
+  saveGame(p.screen);
+  return true;
+}
+
 /* ---- helpers ---- */
 function el(html){ var d=document.createElement("div"); d.innerHTML=html.trim(); return d.firstChild; }
 function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
@@ -423,6 +565,7 @@ function rerenderCurrent(){
 function renderTitle(){
   currentScreen = "title";
   S = freshState();
+  clearSave();
   app.innerHTML = "";
   document.title = t("title_doc");
   var wrap = el('<div class="shell"></div>');
@@ -455,6 +598,7 @@ function renderTitle(){
   document.getElementById("beginBtn").addEventListener("click", function(){
     var name = (input.value||"").trim() || t("title_house_default");
     S.house = name;
+    S.selections = {};
     renderTick();
   });
   input.addEventListener("keydown", function(e){ if(e.key==="Enter") document.getElementById("beginBtn").click(); });
@@ -576,7 +720,8 @@ function decisionsHTML(tick){
   var cards = tick.decisions.map(function(d){
     var opts = d.options.map(function(o, oi){
       var jump = isJumpOpt(o.name) ? " jump" : "";
-      return '<div class="opt'+jump+'" data-dec="'+d.num+'" data-opt="'+oi+'">'+
+      var sel = (S.selections[d.num] === oi) ? " sel" : "";
+      return '<div class="opt'+jump+sel+'" data-dec="'+d.num+'" data-opt="'+oi+'">'+
         '<div class="opt-top">'+
           '<div class="opt-name">'+esc(o.name)+'</div>'+
           '<div class="rr">'+
@@ -631,7 +776,6 @@ function renderTick(){
   currentScreen = "tick";
   var ticks = getTicks();
   var tick = ticks[S.tickIdx];
-  S.selections = {};
   app.innerHTML = "";
   var wrap = el('<div class="shell fade-in"></div>');
   wrap.innerHTML =
@@ -656,11 +800,13 @@ function renderTick(){
       card.querySelectorAll(".opt").forEach(function(n){ n.classList.remove("sel"); });
       node.classList.add("sel");
       refreshForecast(tick);
+      saveGame("tick");
     });
   });
   document.getElementById("liveBtn").addEventListener("click", function(){
     if(Object.keys(S.selections).length===5) liveGeneration();
   });
+  saveGame("tick");
   renderFooter();
 }
 
@@ -684,9 +830,9 @@ function refreshForecast(tick){
 /* ============================================================
    LIVE THE GENERATION
    ============================================================ */
-function liveGeneration(){
-  var ticks = getTicks();
-  var tick = ticks[S.tickIdx];
+/* pure: derives everything a generation\u2019s outcome needs from S,
+   so a restored save re-renders identically */
+function resolveTick(tick){
   var chosen = tick.decisions.map(function(d){
     return { d:d, o:d.options[S.selections[d.num]] };
   });
@@ -694,7 +840,7 @@ function liveGeneration(){
   var gameOver = null;
   var setbacks = [];
   chosen.forEach(function(c){
-    if(c.o.failure){
+    if(c.o && c.o.failure){
       if(c.o.failure.severity==="game-over" && !gameOver) gameOver = c;
       else if(c.o.failure.severity==="setback") setbacks.push(c);
     }
@@ -710,13 +856,30 @@ function liveGeneration(){
     back: chosen[3].o.name, store: chosen[4].o.name
   };
 
-  var jumpThisTick = isJumpOpt(chosen[0].o.name);
+  return {
+    chosen: chosen, gameOver: gameOver, setbacks: setbacks,
+    newCap: newCap, lastChoices: lastChoices,
+    jumpThisTick: isJumpOpt(chosen[0].o.name)
+  };
+}
+
+function liveGeneration(){
+  var ticks = getTicks();
+  var tick = ticks[S.tickIdx];
+  if(Object.keys(S.selections).length !== 5) { renderTick(); return; }
+
+  /* snapshot BEFORE the jump log is appended, so resuming this
+     screen replays the generation without double-counting it */
+  var snapshot = cloneState();
+  var r = resolveTick(tick);
+
   var hasJumpOption = tick.decisions[0].options.some(function(o){return isJumpOpt(o.name);});
   if(hasJumpOption){
-    S.jumps.push({ tick: tick.n, year: tick.year, from: tick.location, took: jumpThisTick, label: chosen[0].o.name });
+    S.jumps.push({ tick: tick.n, year: tick.year, from: tick.location, took: r.jumpThisTick, label: r.chosen[0].o.name });
   }
 
-  renderOutcome(tick, chosen, gameOver, setbacks, newCap, lastChoices, jumpThisTick);
+  saveGame("outcome", snapshot);
+  renderOutcome(tick, r.chosen, r.gameOver, r.setbacks, r.newCap, r.lastChoices, r.jumpThisTick);
 }
 
 function failBadge(f){
@@ -788,6 +951,7 @@ function renderOutcome(tick, chosen, gameOver, setbacks, newCap, lastChoices, ju
       S.lastChoices = lastChoices;
       S.history.push({ tick: tick.n, year: tick.year, location: tick.location, choices: lastChoices, tier: tierName(newCap), setback: setbacks.length>0 });
       var ticks = getTicks();
+      S.selections = {};
       if(S.tickIdx >= ticks.length-1){
         renderEnd();
       } else {
@@ -838,6 +1002,7 @@ function renderGameOver(tick, go){
   app.appendChild(wrap);
   window.scrollTo(0,0);
   wireLangSwitches(wrap);
+  saveGame("gameover");
   document.getElementById("restartBtn").addEventListener("click", renderTitle);
   renderFooter();
 }
@@ -892,6 +1057,7 @@ function renderEnd(){
   app.appendChild(wrap);
   window.scrollTo(0,0);
   wireLangSwitches(wrap);
+  saveGame("end");
   document.getElementById("restartBtn").addEventListener("click", renderTitle);
   renderFooter();
 }
@@ -901,7 +1067,7 @@ document.title = t("title_doc");
 if(!DATA.en.length && !DATA.ru.length){
   app.innerHTML = '<div class="shell" style="padding:60px 20px;text-align:center;font-family:var(--font-serif)">'+esc(t("no_data"))+'</div>';
   renderFooter();
-} else {
+} else if(!restoreGame()){
   renderTitle();
 }
 
